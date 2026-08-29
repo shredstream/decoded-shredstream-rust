@@ -1,0 +1,57 @@
+[package]
+name = "decoded-shredstream"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Official Rust client for Decoded ShredStream by ShredStream.com — pre-execution Solana transactions decoded from shreds, over UDP push or gRPC."
+repository = "https://github.com/shredstream/decoded-shredstream-rust"
+homepage = "https://shredstream.com"
+keywords = ["solana", "shreds", "low-latency", "transactions", "trading"]
+categories = ["api-bindings", "network-programming"]
+exclude = ["tests/vectors"]
+
+[features]
+default = ["grpc"]
+# gRPC transport (tonic). Disable for a UDP-only, dependency-light build:
+# `default-features = false`.
+grpc = [
+    "dep:tonic",
+    "dep:prost",
+    "dep:prost-types",
+    "dep:tokio-stream",
+    "tokio/rt",
+    "tokio/time",
+]
+
+[dependencies]
+bytes = "1"
+bs58 = "0.5"
+thiserror = "2"
+crossbeam-queue = "0.3"
+socket2 = { version = "0.5", features = ["all"] }
+tokio = { version = "1", features = ["sync"] }
+futures-core = "0.3"
+
+tonic = { version = "0.12", optional = true }
+prost = { version = "0.13", optional = true }
+prost-types = { version = "0.13", optional = true }
+tokio-stream = { version = "0.1", features = ["net"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+# Ecosystem reference types, for conformance checks against the decoder.
+solana-transaction = { version = "3", features = ["serde"] }
+bincode = "1"
+tokio-stream = { version = "0.1", features = ["net"] }
+futures = "0.3"
+serde_json = "1"
+
+[[example]]
+name = "grpc_quickstart"
+required-features = ["grpc"]
+
+[[example]]
+name = "grpc_filters"
+required-features = ["grpc"]
+
