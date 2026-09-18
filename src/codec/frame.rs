@@ -74,9 +74,29 @@ pub enum Push {
     Error(FrameError),
 }
 
+#[derive(Default)]
+struct Reassembler {
+    buf: Vec<u8>,
+    frag_count: u8,
+    expect_index: u8,
+    last_seq: u64,
+    active: bool,
+}
+
+impl Reassembler {
+    fn reset(&mut self) {
+        self.buf.clear();
+        self.frag_count = 0;
+        self.expect_index = 0;
+        self.last_seq = 0;
+        self.active = false;
+    }
+}
+
 pub struct StreamDecoder {
     stats: Arc<Stats>,
     hook: NoticeHook,
+    reasm: Reassembler,
 }
 
 impl Default for StreamDecoder {
@@ -90,6 +110,7 @@ impl StreamDecoder {
         StreamDecoder {
             stats: Arc::new(Stats::default()),
             hook: NoticeHook::default(),
+            reasm: Reassembler::default(),
         }
     }
 
@@ -97,6 +118,7 @@ impl StreamDecoder {
         StreamDecoder {
             stats,
             hook,
+            reasm: Reassembler::default(),
         }
     }
 
@@ -122,13 +144,52 @@ impl StreamDecoder {
             return Push::Skipped;
         }
 
-        if header.frag_count != 1 {
+        let payload = &datagram[FRAME_HEADER_LEN..];
+
+        if header.frag_count == 1 {
+            self.reasm.reset();
+            return self.complete(payload);
+        }
+
+        if header.frag_count == 0 || header.frag_index >= header.frag_count {
             bump!(self.stats.decode_errors);
             self.hook.fire(Notice::DecodeError);
             return Push::Error(FrameError::BadFragment);
         }
 
-        let payload = &datagram[FRAME_HEADER_LEN..];
+        if header.frag_index == 0 {
+            self.reasm.reset();
+            self.reasm.active = true;
+            self.reasm.frag_count = header.frag_count;
+            self.reasm.expect_index = 1;
+            self.reasm.last_seq = header.seq;
+            self.reasm.buf.extend_from_slice(payload);
+            return Push::Skipped;
+        }
+
+        if !self.reasm.active
+            || self.reasm.frag_count != header.frag_count
+            || header.frag_index != self.reasm.expect_index
+            || header.seq != self.reasm.last_seq.wrapping_add(1)
+        {
+            self.reasm.reset();
+            bump!(self.stats.decode_errors);
+            self.hook.fire(Notice::DecodeError);
+            return Push::Error(FrameError::BadFragment);
+        }
+        self.reasm.buf.extend_from_slice(payload);
+        self.reasm.last_seq = header.seq;
+        self.reasm.expect_index += 1;
+
+        if header.frag_index + 1 == header.frag_count {
+            let buf = std::mem::take(&mut self.reasm.buf);
+            self.reasm.reset();
+            return self.complete(&buf);
+        }
+        Push::Skipped
+    }
+
+    fn complete(&mut self, payload: &[u8]) -> Push {
         if payload.len() < 8 {
             bump!(self.stats.decode_errors);
             self.hook.fire(Notice::DecodeError);

@@ -45,6 +45,15 @@ fn decode_shortvec(buf: &[u8]) -> Option<(usize, usize)> {
 }
 
 fn derive_signatures(bytes: &[u8]) -> Vec<Signature> {
+    if bytes.first() == Some(&0x81) {
+        let n = bytes.get(1).copied().unwrap_or(0) as usize;
+        let Some(start) = bytes.len().checked_sub(64 * n) else {
+            return Vec::new();
+        };
+        return (0..n)
+            .map(|i| Signature(bytes[start + 64 * i..start + 64 * (i + 1)].try_into().expect("64-byte slice")))
+            .collect();
+    }
     let Some((count, prefix)) = decode_shortvec(bytes) else {
         return Vec::new();
     };
@@ -98,8 +107,15 @@ impl TransactionUpdate {
     }
 
     pub fn signature(&self) -> Signature {
+        let b: &[u8] = &self.bytes;
+        let view = if b.first() == Some(&0x81) {
+            let n = b.get(1).copied().unwrap_or(0) as usize;
+            b.len().checked_sub(64 * n).and_then(|start| b.get(start..start + 64))
+        } else {
+            b.get(1..65)
+        };
         let mut s = [0u8; 64];
-        if let Some(view) = self.bytes.get(1..65) {
+        if let Some(view) = view {
             s.copy_from_slice(view);
         }
         Signature(s)
